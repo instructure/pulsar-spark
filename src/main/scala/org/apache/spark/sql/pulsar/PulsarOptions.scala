@@ -63,6 +63,10 @@ private[pulsar] object PulsarOptions {
 
   val DeserializePayload = "deserializepayload"
 
+  val MaxRetries = "maxretries"
+  val RetryMultiplier = "retrymultiplier"
+  val InitialInterval = "initialinterval"
+  val RandomizationFactor = "randomizationfactor"
 
   val INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_FALSE =
     """

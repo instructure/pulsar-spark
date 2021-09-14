@@ -60,10 +60,27 @@ private[pulsar] class PulsarProvider
       prepareConfForReader(parameters)
 
     val subscriptionNamePrefix = s"spark-pulsar-${UUID.randomUUID}"
+    val adminApiRetrier = new SimpleRetrier(parameters
+      .getOrElse(MaxRetries, 0)
+      .toString
+      .toInt,
+      parameters
+        .getOrElse(InitialInterval, 500)
+        .toString
+        .toInt,
+      parameters
+        .getOrElse(RetryMultiplier, 1.5)
+        .toString
+        .toDouble,
+      parameters
+        .getOrElse(RandomizationFactor, 0.5)
+        .toString
+        .toDouble)
     val inferredSchema = Utils.tryWithResource(
       new PulsarMetadataReader(
         serviceUrlConfig,
         adminUrlConfig,
+        adminApiRetrier,
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,
@@ -88,9 +105,26 @@ private[pulsar] class PulsarProvider
       prepareConfForReader(parameters)
 
     val subscriptionNamePrefix = s"spark-pulsar-${UUID.randomUUID}-${metadataPath.hashCode}"
+    val adminApiRetrier = new SimpleRetrier(parameters
+      .getOrElse(MaxRetries, 0)
+      .toString
+      .toInt,
+      parameters
+        .getOrElse(InitialInterval, 500)
+        .toString
+        .toInt,
+      parameters
+        .getOrElse(RetryMultiplier, 1.5)
+        .toString
+        .toDouble,
+      parameters
+        .getOrElse(RandomizationFactor, 0.5)
+        .toString
+        .toDouble)
     val metadataReader = new PulsarMetadataReader(
       serviceUrl,
       adminUrl,
+      adminApiRetrier,
       clientConfig,
       adminClientConfig,
       subscriptionNamePrefix,
@@ -134,10 +168,28 @@ private[pulsar] class PulsarProvider
 
     val (clientConfig, readerConfig, adminClientConfig, serviceUrl, adminUrl) =
       prepareConfForReader(parameters)
+
+    val adminApiRetrier = new SimpleRetrier(parameters
+      .getOrElse(MaxRetries, 0)
+      .toString
+      .toInt,
+      parameters
+        .getOrElse(InitialInterval, 500)
+        .toString
+        .toInt,
+      parameters
+        .getOrElse(RetryMultiplier, 1.5)
+        .toString
+        .toDouble,
+      parameters
+        .getOrElse(RandomizationFactor, 0.5)
+        .toString
+        .toDouble)
     val (start, end, schema, pSchema) = Utils.tryWithResource(
       new PulsarMetadataReader(
         serviceUrl,
         adminUrl,
+        adminApiRetrier,
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,

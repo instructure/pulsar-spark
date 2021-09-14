@@ -39,6 +39,7 @@ import org.apache.spark.sql.types.StructType
 private[pulsar] case class PulsarMetadataReader(
     serviceUrl: String,
     adminUrl: String,
+    adminApiRetrier: Retrier,
     clientConf: ju.Map[String, Object],
     adminClientConf: ju.Map[String, Object],
     driverGroupIdPrefix: String,
@@ -72,7 +73,9 @@ private[pulsar] case class PulsarMetadataReader(
       case (tp, mid) =>
         val umid = mid.asInstanceOf[UserProvidedMessageId]
         try {
-          admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", umid.mid)
+          adminApiRetrier.retry {
+            admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", umid.mid)
+          }
         } catch {
           case e: Throwable =>
             throw new RuntimeException(
@@ -87,14 +90,22 @@ private[pulsar] case class PulsarMetadataReader(
       case (tp, time) =>
         try {
           if (time == PulsarProvider.EARLIEST_TIME) {
-            admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.earliest)
+            adminApiRetrier.retry {
+              admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.earliest)
+            }
           } else if (time == PulsarProvider.LATEST_TIME) {
-            admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.latest)
+            adminApiRetrier.retry {
+              admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.latest)
+            }
           } else if (time < 0) {
             throw new RuntimeException(s"Invalid starting time for $tp: $time")
           } else {
-            admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.latest)
-            admin.topics().resetCursor(tp, s"$driverGroupIdPrefix-$tp", time)
+            adminApiRetrier.retry {
+              admin.topics().createSubscription(tp, s"$driverGroupIdPrefix-$tp", MessageId.latest)
+            }
+            adminApiRetrier.retry {
+              admin.topics().resetCursor(tp, s"$driverGroupIdPrefix-$tp", time)
+            }
           }
         } catch {
           case e: Throwable =>
@@ -108,7 +119,9 @@ private[pulsar] case class PulsarMetadataReader(
     offset.foreach {
       case (tp, mid) =>
         try {
-          admin.topics().resetCursor(tp, s"$driverGroupIdPrefix-$tp", mid)
+          adminApiRetrier.retry {
+            admin.topics().resetCursor(tp, s"$driverGroupIdPrefix-$tp", mid)
+          }
         } catch {
           case e: PulsarAdminException if e.getStatusCode == 404 || e.getStatusCode == 412 =>
             logInfo(
@@ -125,7 +138,9 @@ private[pulsar] case class PulsarMetadataReader(
     getTopics()
     topics.foreach { tp =>
       try {
-        admin.topics().deleteSubscription(tp, s"$driverGroupIdPrefix-$tp")
+        adminApiRetrier.retry {
+          admin.topics().deleteSubscription(tp, s"$driverGroupIdPrefix-$tp")
+        }
       } catch {
         case e: PulsarAdminException if e.getStatusCode == 404 =>
           logInfo(s"Cannot remove cursor since the topic $tp has been deleted during execution.")
@@ -186,7 +201,9 @@ private[pulsar] case class PulsarMetadataReader(
 
   def getPulsarSchema(topic: String): SchemaInfo = {
     try {
-      admin.schemas().getSchemaInfo(TopicName.get(topic).toString)
+      adminApiRetrier.retry {
+        admin.schemas().getSchemaInfo(TopicName.get(topic).toString)
+      }
     } catch {
       case e: PulsarAdminException if e.getStatusCode == 404 =>
         return BytesSchema.of().getSchemaInfo
@@ -202,7 +219,9 @@ private[pulsar] case class PulsarMetadataReader(
     SpecificPulsarOffset(topicPartitions.map { tp =>
       (tp -> PulsarSourceUtils.seekableLatestMid(
         try {
-          admin.topics().getLastMessageId(tp)
+          adminApiRetrier.retry {
+            admin.topics().getLastMessageId(tp)
+          }
         } catch {
           case e: PulsarAdminException if e.getStatusCode == 404 =>
             MessageId.earliest
@@ -293,7 +312,9 @@ private[pulsar] case class PulsarMetadataReader(
 
   def fetchLatestOffsetForTopic(topic: String): MessageId = {
     PulsarSourceUtils.seekableLatestMid( try {
-      admin.topics().getLastMessageId(topic)
+      adminApiRetrier.retry {
+        admin.topics().getLastMessageId(topic)
+      }
     } catch {
       case e: PulsarAdminException if e.getStatusCode == 404 =>
         MessageId.earliest
@@ -327,7 +348,9 @@ private[pulsar] case class PulsarMetadataReader(
   private def getTopicPartitions(): Seq[String] = {
     getTopics()
     topicPartitions = topics.flatMap { tp =>
-      val partNum = admin.topics().getPartitionedTopicMetadata(tp).partitions
+      val partNum = adminApiRetrier.retry{
+        admin.topics().getPartitionedTopicMetadata(tp).partitions
+      }
       if (partNum == 0) {
         tp :: Nil
       } else {
@@ -349,7 +372,9 @@ private[pulsar] case class PulsarMetadataReader(
     val nonPartitionedMatch = topicsPatternFilter(allNonPartitionedTopics, dest.toString)
 
     val allPartitionedTopics: ju.List[String] =
-      admin.topics().getPartitionedTopicList(dest.getNamespace)
+      adminApiRetrier.retry{
+        admin.topics().getPartitionedTopicList(dest.getNamespace)
+      }
     val partitionedMatch = topicsPatternFilter(allPartitionedTopics, dest.toString)
     nonPartitionedMatch ++ partitionedMatch
   }
@@ -472,7 +497,12 @@ private[pulsar] case class PulsarMetadataReader(
           UserProvidedMessageId(MessageId.earliest)
         } else if (time == PulsarProvider.LATEST_TIME) {
           UserProvidedMessageId(
-            PulsarSourceUtils.seekableLatestMid(admin.topics().getLastMessageId(tp)))
+            PulsarSourceUtils.seekableLatestMid(
+              adminApiRetrier.retry{
+                admin.topics().getLastMessageId(tp)
+              }
+            )
+          )
         } else {
           assert (time > 0, s"time less than 0: $time")
           val reader = client
@@ -537,7 +567,12 @@ private[pulsar] case class PulsarMetadataReader(
         UserProvidedMessageId(off)
       case MessageId.latest =>
         UserProvidedMessageId(
-          PulsarSourceUtils.seekableLatestMid(admin.topics().getLastMessageId(tp)))
+          PulsarSourceUtils.seekableLatestMid(
+            adminApiRetrier.retry{
+              admin.topics().getLastMessageId(tp)
+            }
+          )
+        )
       case _ =>
         val reader = client
           .newReader()
