@@ -118,7 +118,10 @@ private[pulsar] class PulsarProvider
       pollTimeoutMs(caseInsensitiveParams),
       failOnDataLoss(caseInsensitiveParams),
       subscriptionNamePrefix,
-      jsonOptions
+      jsonOptions,
+      maxEntriesPerTrigger(caseInsensitiveParams),
+      minEntriesPerTopic(caseInsensitiveParams),
+      forwardStrategy(caseInsensitiveParams)
     )
   }
 
@@ -376,6 +379,15 @@ private[pulsar] object PulsarProvider extends Logging {
         PulsarOptions.POLL_TIMEOUT_MS,
         (SparkEnv.get.conf.getTimeAsSeconds("spark.network.timeout", "120s") * 1000).toString)
       .toInt
+
+  private def maxEntriesPerTrigger(caseInsensitiveParams: Map[String, String]): Long =
+    caseInsensitiveParams.getOrElse(MAX_ENTRIES_PER_TRIGGER, "-1").toLong
+
+  private def minEntriesPerTopic(caseInsensitiveParams: Map[String, String]): Long =
+    caseInsensitiveParams.getOrElse(ADDITIONAL_ENTRIES_PER_TOPIC, "0").toLong
+
+  private def forwardStrategy(caseInsensitiveParams: Map[String, String]): String =
+    caseInsensitiveParams.getOrElse(FORWARD_STRATEGY, "simple")
 
   private def validateGeneralOptions(
       caseInsensitiveParams: Map[String, String]): Map[String, String] = {
