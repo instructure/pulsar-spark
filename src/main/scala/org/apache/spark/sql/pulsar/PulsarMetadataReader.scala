@@ -15,18 +15,20 @@ package org.apache.spark.sql.pulsar
 
 import java.{util => ju}
 import java.io.Closeable
-import java.util.{Optional, UUID}
+import java.util.Optional
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 import org.apache.pulsar.client.admin.{PulsarAdmin, PulsarAdminException}
-import org.apache.pulsar.client.api.{Message, MessageId, PulsarClient, SubscriptionInitialPosition, SubscriptionType}
+import org.apache.pulsar.client.api.{Message, MessageId, PulsarClient}
 import org.apache.pulsar.client.impl.schema.BytesSchema
+import org.apache.pulsar.client.internal.DefaultImplementation
 import org.apache.pulsar.common.naming.TopicName
 import org.apache.pulsar.common.schema.SchemaInfo
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.pulsar.PulsarOptions.{AUTH_PARAMS, AUTH_PLUGIN_CLASS_NAME, TLS_ALLOW_INSECURE_CONNECTION, TLS_HOSTNAME_VERIFICATION_ENABLE, TLS_TRUST_CERTS_FILE_PATH, TOPIC_OPTION_KEYS}
+import org.apache.spark.sql.pulsar.PulsarOptions._
+import org.apache.spark.sql.pulsar.topicinternalstats.forward._
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -202,6 +204,82 @@ private[pulsar] case class PulsarMetadataReader(
               e)
         }
       ))
+    }.toMap)
+  }
+
+
+  def forwardOffset(actualOffset: Map[String, MessageId],
+                    strategy: String,
+                    numberOfEntriesToForward: Long,
+                    ensureEntriesPerTopic: Long): SpecificPulsarOffset = {
+    getTopicPartitions()
+
+    // Collect internal stats for all topics
+    val topicStats = topicPartitions.map( topic => {
+      val internalStats = admin.topics().getInternalStats(topic)
+      val topicActualMessageId = actualOffset.getOrElse(topic, MessageId.earliest)
+      topic -> TopicState(internalStats,
+        PulsarSourceUtils.getLedgerId(topicActualMessageId),
+        PulsarSourceUtils.getEntryId(topicActualMessageId))
+    } ).toMap
+
+    val forwarder = strategy match {
+      case PulsarOptions.ProportionalForwardStrategy =>
+        new ProportionalForwardStrategy(numberOfEntriesToForward, ensureEntriesPerTopic)
+      case PulsarOptions.LargeFirstForwardStrategy =>
+        new LargeFirstForwardStrategy(numberOfEntriesToForward, ensureEntriesPerTopic)
+      case _ =>
+        new LinearForwardStrategy(numberOfEntriesToForward)
+    }
+
+    SpecificPulsarOffset(topicPartitions.map { topic =>
+      topic -> PulsarSourceUtils.seekableLatestMid {
+        // Fetch actual offset for topic
+        val topicActualMessageId = actualOffset.getOrElse(topic, MessageId.earliest)
+        try {
+          // Get the actual ledger
+          val actualLedgerId = PulsarSourceUtils.getLedgerId(topicActualMessageId)
+          // Get the actual entry ID
+          val actualEntryId = PulsarSourceUtils.getEntryId(topicActualMessageId)
+          // Get the partition index
+          val partitionIndex = PulsarSourceUtils.getPartitionIndex(topicActualMessageId)
+          // Cache topic internal stats
+          val internalStats = topicStats.get(topic).get.internalStat
+          // Calculate the amount of messages we will pull in
+          val numberOfEntriesPerTopic = forwarder.forward(topicStats)(topic)
+          // Get a future message ID which corresponds
+          // to the maximum number of messages
+          val (nextLedgerId, nextEntryId) = TopicInternalStatsUtils.forwardMessageId(
+            internalStats,
+            actualLedgerId,
+            actualEntryId,
+            numberOfEntriesPerTopic)
+          // Build a message id
+          val forwardedMessageId =
+            DefaultImplementation.newMessageId(nextLedgerId, nextEntryId, partitionIndex)
+          // Log state
+          val forwardedEntry = TopicInternalStatsUtils.numOfEntriesUntil(
+            internalStats, nextLedgerId, nextEntryId)
+          val entryCount = internalStats.numberOfEntries
+          val progress = f"${forwardedEntry.toFloat / entryCount.toFloat}%1.3f"
+          val logMessage = s"Pulsar Connector forward on topic. " +
+            s"[$numberOfEntriesPerTopic/$numberOfEntriesToForward]" +
+            s"${topic.reverse.take(30).reverse} $topicActualMessageId -> " +
+            s"$forwardedMessageId ($forwardedEntry/$entryCount) [$progress]"
+          log.debug(logMessage)
+          // Return the message ID
+          forwardedMessageId
+        } catch {
+          case e: PulsarAdminException if e.getStatusCode == 404 =>
+            MessageId.earliest
+          case e: Throwable =>
+            throw new RuntimeException(
+              s"Failed to get forwarded messageId for ${TopicName.get(topic).toString} " +
+                s"(tried to forward ${forwarder.forward(topicStats)(topic)} messages " +
+                s"starting from `$topicActualMessageId` using strategy $strategy)", e)
+        }
+
+      }
     }.toMap)
   }
 

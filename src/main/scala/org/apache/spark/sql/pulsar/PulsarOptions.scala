@@ -31,6 +31,12 @@ private[pulsar] object PulsarOptions {
   val TOPIC_MULTI = "topics"
   val TOPIC_PATTERN = "topicspattern"
 
+  val MaxEntriesPerTrigger = "maxentriespertrigger"
+  val EnsureEntriesPerTopic = "ensureentriespertopic"
+  val ForwardStrategy = "forwardstrategy"
+  val ProportionalForwardStrategy = "proportional"
+  val LargeFirstForwardStrategy = "large-first"
+
   val PARTITION_SUFFIX = TopicName.PARTITIONED_TOPIC_SUFFIX
 
   val TOPIC_OPTION_KEYS = Set(
