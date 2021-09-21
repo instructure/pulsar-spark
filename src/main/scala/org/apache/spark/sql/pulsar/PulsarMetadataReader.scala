@@ -26,7 +26,7 @@ import org.apache.pulsar.common.naming.TopicName
 import org.apache.pulsar.common.schema.SchemaInfo
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.pulsar.PulsarOptions.{AUTH_PARAMS, AUTH_PLUGIN_CLASS_NAME, TLS_ALLOW_INSECURE_CONNECTION, TLS_HOSTNAME_VERIFICATION_ENABLE, TLS_TRUST_CERTS_FILE_PATH, TOPIC_OPTION_KEYS}
+import org.apache.spark.sql.pulsar.PulsarOptions.{AUTH_PARAMS, AUTH_PLUGIN_CLASS_NAME, DESERIALIZE_PAYLOAD, TLS_ALLOW_INSECURE_CONNECTION, TLS_HOSTNAME_VERIFICATION_ENABLE, TLS_TRUST_CERTS_FILE_PATH, TOPIC_OPTION_KEYS}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -40,7 +40,8 @@ private[pulsar] case class PulsarMetadataReader(
     clientConf: ju.Map[String, Object],
     adminClientConf: ju.Map[String, Object],
     driverGroupIdPrefix: String,
-    caseInsensitiveParameters: Map[String, String])
+    caseInsensitiveParameters: Map[String, String],
+    deserializePayload: Boolean)
     extends Closeable
     with Logging {
 
@@ -157,17 +158,22 @@ private[pulsar] case class PulsarMetadataReader(
 
   def getPulsarSchema(): SchemaInfo = {
     getTopics()
-    if (topics.size > 0) {
+    if (!deserializePayload) {
+      SchemaUtils.emptySchemaInfo()
+    }
+    else if (topics.size > 0) {
       val schemas = topics.map { tp =>
         getPulsarSchema(tp)
       }
       val sset = schemas.toSet
       if (sset.size != 1) {
-        throw new IllegalArgumentException(
-          s"Topics to read must share identical schema, " +
-            s"however we got ${sset.size} distinct schemas:[${sset.mkString(", ")}]")
+          throw new IllegalArgumentException(
+            s"Topics to read must share identical schema. Consider setting " +
+              s"'emptySchemaIfTopicsHasDifferentSchemas' to true. " +
+              s"We got ${sset.size} distinct schemas:[${sset.mkString(", ")}]")
+      } else {
+        sset.head
       }
-      sset.head
     } else {
       // if no topic exists, and we are getting schema, then auto created topic has schema of None
       SchemaUtils.emptySchemaInfo()

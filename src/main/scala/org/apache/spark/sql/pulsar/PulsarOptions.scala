@@ -55,6 +55,8 @@ private[pulsar] object PulsarOptions {
   val USE_TLS = "useTls"
   val TLS_HOSTNAME_VERIFICATION_ENABLE = "tlsHostnameVerificationEnable"
 
+  val DESERIALIZE_PAYLOAD = "deserializePayload"
+
 
   val INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_FALSE =
     """
