@@ -67,7 +67,11 @@ private[pulsar] class PulsarProvider
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,
-        caseInsensitiveParams)) { reader =>
+        caseInsensitiveParams,
+        parameters
+          .getOrElse(DeserializePayload, true)
+          .toString
+          .toBoolean)) { reader =>
       reader.getAndCheckCompatible(schema)
     }
     (shortName(), inferredSchema)
@@ -90,7 +94,11 @@ private[pulsar] class PulsarProvider
       clientConfig,
       adminClientConfig,
       subscriptionNamePrefix,
-      caseInsensitiveParams)
+      caseInsensitiveParams,
+      parameters
+        .getOrElse(DeserializePayload, true)
+        .toString
+        .toBoolean)
 
     metadataReader.getAndCheckCompatible(schema)
 
@@ -133,7 +141,11 @@ private[pulsar] class PulsarProvider
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,
-        caseInsensitiveParams)) { reader =>
+        caseInsensitiveParams,
+        parameters
+          .getOrElse(DeserializePayload, true)
+          .toString
+          .toBoolean)) { reader =>
       val perTopicStarts = reader.startingOffsetForEachTopic(
         caseInsensitiveParams,
         EarliestOffset)

@@ -394,6 +394,26 @@ the maximum number of entries per micro-batch.
 `large-first` and `proportional`.</li>
 </td>
 </tr>
+<tr>
+<td>
+`deserializePayload`
+</td>
+<td>
+Boolean value
+</td>
+<td>
+`true`
+</td>
+<td>
+Streaming query
+</td>
+<td>
+If multiple topics are read, using this parameter topic
+value deserialization can be turned off (by setting it to
+`false`). In that way, topics with multiple schemas can
+be read in the same pipeline.
+</td>
+</tr>
 
 
 </table>
@@ -459,6 +479,11 @@ df.selectExpr("CAST(__key AS STRING)", "CAST(value AS STRING)")
 is loaded to a `value` column with the corresponding type with Pulsar schema.
 
 * For topics with Avro or JSON schema, their field names and field types are kept in the result rows.
+
+* If the `topicsPattern` matches for topics which have different schemas, then setting
+`deserializePayload` to `false` will allow the connector to read this content in a
+raw form. In this case it is the responsibility of the pipeline to apply the schema
+on this content, which is loaded to the `value` column. 
 
 Besides, each row in the source has the following metadata fields as well.
 <table class="table">
