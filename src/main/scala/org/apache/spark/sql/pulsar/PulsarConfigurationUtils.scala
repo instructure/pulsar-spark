@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -13,33 +13,32 @@
  */
 package org.apache.spark.sql.pulsar
 
+import java.lang.reflect.Modifier
 import java.util.Locale
 
-import reflect.runtime.universe._
+import scala.reflect._
 
-import org.apache.pulsar.client.impl.conf.{ClientConfigurationData, ConsumerConfigurationData, ProducerConfigurationData, ReaderConfigurationData}
+import org.apache.pulsar.client.impl.conf.{
+  ClientConfigurationData,
+  ProducerConfigurationData,
+  ReaderConfigurationData
+}
 import org.apache.pulsar.shade.com.fasterxml.jackson.annotation.JsonIgnore
 
 object PulsarConfigurationUtils {
 
-  private def nonIgnoredFields[T: TypeTag] = {
-    // a field is a Term that is a Var or a Val
-    val fields = typeOf[T].members.collect{ case s: TermSymbol => s }.
-      filter(s => s.isVal || s.isVar)
-
-    // then only keep the ones without a JsonIgnore annotation
-    val ignores = fields.flatMap(f => f.annotations.find(_.tree.tpe =:= typeOf[JsonIgnore]).
-      map((f, _))).map(t => t._1).toList
-
-    fields.filterNot(ignores.contains).map(_.name.toString)
+  private def nonIgnoredFields[T: ClassTag] = {
+    classTag[T].runtimeClass.getDeclaredFields
+      .filter(f => !Modifier.isStatic(f.getModifiers))
+      .filter(f => f.getDeclaredAnnotation(classOf[JsonIgnore]) == null)
+      .map(_.getName)
   }
 
-  private def insensitive2Sensitive[T: TypeTag]: Map[String, String] = {
+  private def insensitive2Sensitive[T: ClassTag]: Map[String, String] = {
     nonIgnoredFields[T].map(s => s.toLowerCase(Locale.ROOT) -> s).toMap
   }
 
-  val clientConfKeys = insensitive2Sensitive[ClientConfigurationData]
-  val producerConfKeys = insensitive2Sensitive[ProducerConfigurationData]
-  val consumerConfKeys = insensitive2Sensitive[ConsumerConfigurationData[_]]
-  val readerConfKeys = insensitive2Sensitive[ReaderConfigurationData[_]]
+  val clientConfKeys: Map[String, String] = insensitive2Sensitive[ClientConfigurationData]
+  val producerConfKeys: Map[String, String] = insensitive2Sensitive[ProducerConfigurationData]
+  val readerConfKeys: Map[String, String] = insensitive2Sensitive[ReaderConfigurationData[_]]
 }

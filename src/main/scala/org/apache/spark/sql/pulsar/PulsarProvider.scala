@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -33,8 +33,8 @@ import org.apache.spark.util.Utils
 
 /**
  * The provider class for all Pulsar readers and writers. It is designed such that it throws
- * IllegalArgumentException when the Pulsar Dataset is created, so that it can catch
- * missing options even before the query is started.
+ * IllegalArgumentException when the Pulsar Dataset is created, so that it can catch missing
+ * options even before the query is started.
  */
 private[pulsar] class PulsarProvider
     extends DataSourceRegister
@@ -67,7 +67,9 @@ private[pulsar] class PulsarProvider
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,
-        caseInsensitiveParams)) { reader =>
+        caseInsensitiveParams,
+        getAllowDifferentTopicSchemas(parameters),
+        getPredefinedSubscription(parameters))) { reader =>
       reader.getAndCheckCompatible(schema)
     }
     (shortName(), inferredSchema)
@@ -83,21 +85,22 @@ private[pulsar] class PulsarProvider
     val (clientConfig, readerConfig, adminClientConfig, serviceUrl, adminUrl) =
       prepareConfForReader(parameters)
 
-    val subscriptionNamePrefix = s"spark-pulsar-${UUID.randomUUID}-${metadataPath.hashCode}"
+    val subscriptionNamePrefix = getSubscriptionPrefix(parameters)
     val metadataReader = new PulsarMetadataReader(
       serviceUrl,
       adminUrl,
       clientConfig,
       adminClientConfig,
       subscriptionNamePrefix,
-      caseInsensitiveParams)
+      caseInsensitiveParams,
+      getAllowDifferentTopicSchemas(parameters),
+      getPredefinedSubscription(parameters))
 
     metadataReader.getAndCheckCompatible(schema)
 
     // start from latest offset if not specified to be consistent with Pulsar source
-    val offset = metadataReader.startingOffsetForEachTopic(
-      caseInsensitiveParams,
-      LatestOffset)
+    val offset =
+      metadataReader.offsetForEachTopic(caseInsensitiveParams, LatestOffset, StartOptionKey)
     metadataReader.setupCursor(offset)
 
     new PulsarSource(
@@ -110,7 +113,8 @@ private[pulsar] class PulsarProvider
       pollTimeoutMs(caseInsensitiveParams),
       failOnDataLoss(caseInsensitiveParams),
       subscriptionNamePrefix,
-      jsonOptions
+      jsonOptions,
+      maxEntriesPerTrigger(caseInsensitiveParams)
     )
   }
 
@@ -119,7 +123,7 @@ private[pulsar] class PulsarProvider
       parameters: Map[String, String]): BaseRelation = {
     val caseInsensitiveParams = validateBatchOptions(parameters)
 
-    val subscriptionNamePrefix = s"spark-pulsar-batch-${UUID.randomUUID}"
+    val subscriptionNamePrefix = getSubscriptionPrefix(parameters, isBatch = true)
 
     val (clientConfig, readerConfig, adminClientConfig, serviceUrl, adminUrl) =
       prepareConfForReader(parameters)
@@ -130,19 +134,23 @@ private[pulsar] class PulsarProvider
         clientConfig,
         adminClientConfig,
         subscriptionNamePrefix,
-        caseInsensitiveParams)) { reader =>
-      val perTopicStarts = reader.startingOffsetForEachTopic(
         caseInsensitiveParams,
-        EarliestOffset)
+        getAllowDifferentTopicSchemas(parameters),
+        getPredefinedSubscription(parameters))) { reader =>
+      val perTopicStarts =
+        reader.offsetForEachTopic(caseInsensitiveParams, EarliestOffset, StartOptionKey)
       val startingOffset = SpecificPulsarOffset(
         reader.actualOffsets(
           perTopicStarts,
           pollTimeoutMs(caseInsensitiveParams),
           reportDataLossFunc(failOnDataLoss(caseInsensitiveParams))))
-
-      val endingOffset =
-        reader.offsetForEachTopic(
-          caseInsensitiveParams, ENDING_OFFSETS_OPTION_KEY, LatestOffset)
+      val perTopicEnds =
+        reader.offsetForEachTopic(caseInsensitiveParams, LatestOffset, EndOptionKey)
+      val endingOffset = SpecificPulsarOffset(
+        reader.actualOffsets(
+          perTopicEnds,
+          pollTimeoutMs(caseInsensitiveParams),
+          reportDataLossFunc(failOnDataLoss(caseInsensitiveParams))))
 
       val pulsarSchema = reader.getPulsarSchema()
       val schema = SchemaUtils.pulsarSourceSchema(pulsarSchema)
@@ -161,8 +169,7 @@ private[pulsar] class PulsarProvider
       pollTimeoutMs(caseInsensitiveParams),
       failOnDataLoss(caseInsensitiveParams),
       subscriptionNamePrefix,
-      jsonOptions
-    )
+      jsonOptions)
   }
 
   override def createRelation(
@@ -190,13 +197,11 @@ private[pulsar] class PulsarProvider
       clientConfig,
       producerConfig,
       topic,
-      adminUrl
-    )
+      adminUrl)
 
     /**
-     * This method is suppose to return a relation the data that was written.
-     * Currently we haven't supported schema yet. Therefore, we return an empty
-     * base relation for now.
+     * This method is suppose to return a relation the data that was written. Currently we haven't
+     * supported schema yet. Therefore, we return an empty base relation for now.
      */
     new BaseRelation {
       override def sqlContext: SQLContext = unsupportedException
@@ -223,13 +228,7 @@ private[pulsar] class PulsarProvider
 
     val (clientConfig, producerConfig, topic, adminUrl) = prepareConfForProducer(parameters)
 
-    new PulsarSink(
-      sqlContext,
-      clientConfig,
-      producerConfig,
-      topic,
-      adminUrl
-    )
+    new PulsarSink(sqlContext, clientConfig, producerConfig, topic, adminUrl)
   }
 }
 
@@ -242,33 +241,34 @@ private[pulsar] object PulsarProvider extends Logging {
 
   private def getClientParams(parameters: Map[String, String]): Map[String, String] = {
     val lowercaseKeyMap = parameters.keySet
-      .filter(_.startsWith(PULSAR_CLIENT_OPTION_KEY_PREFIX))
+      .filter(_.startsWith(PulsarClientOptionKeyPrefix))
       .map { k =>
-        k.drop(PULSAR_CLIENT_OPTION_KEY_PREFIX.length).toString -> parameters(k)
+        k.drop(PulsarClientOptionKeyPrefix.length).toString -> parameters(k)
       }
       .toMap
     lowercaseKeyMap.map { case (k, v) =>
       clientConfKeys.getOrElse(
-        k, throw new IllegalArgumentException(s"$k not supported by pulsar")) -> v
+        k,
+        throw new IllegalArgumentException(s"$k not supported by pulsar")) -> v
     }
   }
 
   private def getProducerParams(parameters: Map[String, String]): Map[String, String] = {
-    getModuleParams(parameters, PULSAR_PRODUCER_OPTION_KEY_PREFIX, producerConfKeys)
+    getModuleParams(parameters, PulsarProducerOptionKeyPrefix, producerConfKeys)
   }
 
   private def getReaderParams(parameters: Map[String, String]): Map[String, String] = {
-    getModuleParams(parameters, PULSAR_READER_OPTION_KEY_PREFIX, readerConfKeys)
+    getModuleParams(parameters, PulsarReaderOptionKeyPrefix, readerConfKeys)
   }
 
   private def getAdminParams(parameters: Map[String, String]): Map[String, String] = {
-    getModuleParams(parameters, PULSAR_ADMIN_OPTION_KEY_PREFIX, clientConfKeys)
+    getModuleParams(parameters, PulsarAdminOptionKeyPrefix, clientConfKeys)
   }
 
   private def getModuleParams(
-                         connectorConfiguration: Map[String, String],
-                         modulePrefix: String,
-                         moduleKeyLookup: Map[String, String]): Map[String, String] = {
+      connectorConfiguration: Map[String, String],
+      modulePrefix: String,
+      moduleKeyLookup: Map[String, String]): Map[String, String] = {
     val lowerCaseModuleParameters = connectorConfiguration.keySet
       .filter(_.startsWith(modulePrefix))
       .map { k =>
@@ -277,7 +277,8 @@ private[pulsar] object PulsarProvider extends Logging {
       .toMap
     lowerCaseModuleParameters.map { case (k, v) =>
       moduleKeyLookup.getOrElse(
-        k, throw new IllegalArgumentException(s"$k not supported by pulsar")) -> v
+        k,
+        throw new IllegalArgumentException(s"$k not supported by pulsar")) -> v
     }
   }
 
@@ -285,21 +286,32 @@ private[pulsar] object PulsarProvider extends Logging {
     getAdminParams(parameters).isEmpty == false
   }
 
-  def getPulsarStartingOffset(
+  def getPulsarOffset(
       params: Map[String, String],
-      defaultOffsets: PulsarOffset): PulsarOffset = {
+      defaultOffsets: PulsarOffset,
+      optionKey: String): PulsarOffset = {
 
-    val startingOffsets = params.get(STARTING_OFFSETS_OPTION_KEY).map(_.trim)
-    val startingTime = params.get(STARTING_TIME).map(_.trim)
-
-    if (startingOffsets.isDefined && startingTime.isDefined) {
-      throw new IllegalArgumentException(
-        "You can only specify starting position through " +
-          s"either $STARTING_OFFSETS_OPTION_KEY or $STARTING_TIME, not both.")
+    val offsets = optionKey match {
+      case StartOptionKey =>
+        params.get(StartingOffsetsOptionKey).map(_.trim)
+      case EndOptionKey =>
+        params.get(EndingOffsetsOptionKey).map(_.trim)
+    }
+    val time = optionKey match {
+      case StartOptionKey =>
+        params.get(StartingTime).map(_.trim)
+      case EndOptionKey =>
+        params.get(EndingTime).map(_.trim)
     }
 
-    val result = if (startingOffsets.isDefined) {
-      startingOffsets match {
+    if (offsets.isDefined && time.isDefined) {
+      throw new IllegalArgumentException(
+        s"You can only specify starting $optionKey through " +
+          s"either $StartingOffsetsOptionKey or $StartingTime, not both.")
+    }
+
+    val result = if (offsets.isDefined) {
+      offsets match {
         case Some(offset) if offset.toLowerCase(Locale.ROOT) == "latest" =>
           LatestOffset
         case Some(offset) if offset.toLowerCase(Locale.ROOT) == "earliest" =>
@@ -308,16 +320,17 @@ private[pulsar] object PulsarProvider extends Logging {
           SpecificPulsarOffset(JsonUtils.topicOffsets(json))
         case None => defaultOffsets
       }
-    } else if (startingTime.isDefined) {
-      startingTime match {
+    } else if (time.isDefined) {
+      time match {
         case Some(json) if json.startsWith("{") =>
-          SpecificPulsarStartingTime(JsonUtils.topicTimes(json))
+          SpecificPulsarTime(JsonUtils.topicTimes(json))
         case Some(t) => // try to convert it as long if it's not a map
           try {
             TimeOffset(t.toLong)
           } catch {
             case e: NumberFormatException =>
-              throw new IllegalArgumentException(s"starting time $t cannot be converted to Long")
+              throw new IllegalArgumentException(
+                s"$optionKey time $t cannot be converted to Long")
           }
         case None => defaultOffsets
       }
@@ -347,44 +360,66 @@ private[pulsar] object PulsarProvider extends Logging {
     PulsarConfigUpdater(module, params).rebuild()
   }
 
+  private def getSubscriptionPrefix(
+      parameters: Map[String, String],
+      isBatch: Boolean = false): String = {
+    val defaultPrefix = if (isBatch) "spark-pulsar-batch" else "spark-pulsar"
+    parameters.getOrElse(SubscriptionPrefix, s"$defaultPrefix-${UUID.randomUUID}")
+  }
+
+  private def getPredefinedSubscription(parameters: Map[String, String]): Option[String] = {
+    val sub = parameters.getOrElse(PredefinedSubscription, "")
+    sub match {
+      case "" => None
+      case s => Option(s)
+    }
+  }
+
   private def getServiceUrl(parameters: Map[String, String]): String = {
-    parameters.get(SERVICE_URL_OPTION_KEY).get
+    parameters(ServiceUrlOptionKey)
   }
 
   private def getAdminUrl(parameters: Map[String, String]): String = {
-    parameters.get(ADMIN_URL_OPTION_KEY).get
+    parameters(AdminUrlOptionKey)
+  }
+
+  private def getAllowDifferentTopicSchemas(parameters: Map[String, String]): Boolean = {
+    parameters.getOrElse(AllowDifferentTopicSchemas, "false").toBoolean
   }
 
   private def failOnDataLoss(caseInsensitiveParams: Map[String, String]): Boolean =
-    caseInsensitiveParams.getOrElse(FAIL_ON_DATA_LOSS_OPTION_KEY, "false").toBoolean
+    caseInsensitiveParams.getOrElse(FailOnDataLossOptionKey, "false").toBoolean
 
   private def pollTimeoutMs(caseInsensitiveParams: Map[String, String]): Int =
     caseInsensitiveParams
       .getOrElse(
-        PulsarOptions.POLL_TIMEOUT_MS,
+        PulsarOptions.PollTimeoutMS,
         (SparkEnv.get.conf.getTimeAsSeconds("spark.network.timeout", "120s") * 1000).toString)
       .toInt
 
+  private def maxEntriesPerTrigger(caseInsensitiveParams: Map[String, String]): Long =
+    caseInsensitiveParams.getOrElse(MaxEntriesPerTrigger, "-1").toLong
+
   private def validateGeneralOptions(
       caseInsensitiveParams: Map[String, String]): Map[String, String] = {
-    if (!caseInsensitiveParams.contains(SERVICE_URL_OPTION_KEY)) {
-      throw new IllegalArgumentException(s"$SERVICE_URL_OPTION_KEY must be specified")
+    if (!caseInsensitiveParams.contains(ServiceUrlOptionKey)) {
+      throw new IllegalArgumentException(s"$ServiceUrlOptionKey must be specified")
     }
 
-    if (!caseInsensitiveParams.contains(ADMIN_URL_OPTION_KEY)) {
-      throw new IllegalArgumentException(s"$ADMIN_URL_OPTION_KEY must be specified")
+    if (!caseInsensitiveParams.contains(AdminUrlOptionKey)) {
+      throw new IllegalArgumentException(s"$AdminUrlOptionKey must be specified")
     }
 
     // validate topic options
-    val topicOptions = caseInsensitiveParams.filter {
-      case (k, _) => TOPIC_OPTION_KEYS.contains(k)
+    val topicOptions = caseInsensitiveParams.filter { case (k, _) =>
+      TopicOptionKeys.contains(k)
     }.toSeq
     if (topicOptions.isEmpty || topicOptions.size > 1) {
       throw new IllegalArgumentException(
         "You should specify topic(s) using one of the topic options: "
-          + TOPIC_OPTION_KEYS.mkString(", "))
+          + TopicOptionKeys.mkString(", "))
     }
-    caseInsensitiveParams.find(x => TOPIC_OPTION_KEYS.contains(x._1)).get match {
+    topicOptions.head match {
       case ("topic", value) =>
         if (value.contains(",")) {
           throw new IllegalArgumentException(
@@ -401,7 +436,7 @@ private[pulsar] object PulsarProvider extends Logging {
         }
 
       case ("topicspattern", value) =>
-        if (value.trim.length == 0) {
+        if (value.trim.isEmpty) {
           throw new IllegalArgumentException("TopicsPattern is empty")
         }
     }
@@ -411,7 +446,7 @@ private[pulsar] object PulsarProvider extends Logging {
   private def validateStreamOptions(parameters: Map[String, String]): Map[String, String] = {
     val caseInsensitiveParams = parameters.map { case (k, v) => (k.toLowerCase(Locale.ROOT), v) }
     caseInsensitiveParams
-      .get(ENDING_OFFSETS_OPTION_KEY)
+      .get(EndingOffsetsOptionKey)
       .map(_ =>
         throw new IllegalArgumentException("ending offset not valid in streaming queries"))
 
@@ -420,7 +455,7 @@ private[pulsar] object PulsarProvider extends Logging {
 
   private def validateBatchOptions(parameters: Map[String, String]): Map[String, String] = {
     val caseInsensitiveParams = parameters.map { case (k, v) => (k.toLowerCase(Locale.ROOT), v) }
-    getPulsarOffset(caseInsensitiveParams, STARTING_OFFSETS_OPTION_KEY, EarliestOffset) match {
+    getPulsarOffset(caseInsensitiveParams, StartingOffsetsOptionKey, EarliestOffset) match {
       case EarliestOffset => // good to go
       case LatestOffset =>
         throw new IllegalArgumentException(
@@ -436,7 +471,7 @@ private[pulsar] object PulsarProvider extends Logging {
         }
     }
 
-    getPulsarOffset(caseInsensitiveParams, ENDING_OFFSETS_OPTION_KEY, LatestOffset) match {
+    getPulsarOffset(caseInsensitiveParams, EndingOffsetsOptionKey, LatestOffset) match {
       case EarliestOffset =>
         throw new IllegalArgumentException(
           "ending offset can't be earliest " +
@@ -458,34 +493,38 @@ private[pulsar] object PulsarProvider extends Logging {
   private def validateSinkOptions(parameters: Map[String, String]): Map[String, String] = {
     val caseInsensitiveParams = parameters.map { case (k, v) => (k.toLowerCase(Locale.ROOT), v) }
 
-    if (!caseInsensitiveParams.contains(SERVICE_URL_OPTION_KEY)) {
-      throw new IllegalArgumentException(s"$SERVICE_URL_OPTION_KEY must be specified")
+    if (!caseInsensitiveParams.contains(ServiceUrlOptionKey)) {
+      throw new IllegalArgumentException(s"$ServiceUrlOptionKey must be specified")
     }
 
-    if (!caseInsensitiveParams.contains(ADMIN_URL_OPTION_KEY)) {
-      throw new IllegalArgumentException(s"$ADMIN_URL_OPTION_KEY must be specified")
+    if (!caseInsensitiveParams.contains(AdminUrlOptionKey)) {
+      throw new IllegalArgumentException(s"$AdminUrlOptionKey must be specified")
     }
 
     val topicOptions =
-      caseInsensitiveParams.filter { case (k, _) => TOPIC_OPTION_KEYS.contains(k) }.toSeq.toMap
-    if (topicOptions.size > 1 || topicOptions.contains(TOPIC_MULTI) || topicOptions.contains(
-          TOPIC_PATTERN)) {
+      caseInsensitiveParams.filter { case (k, _) => TopicOptionKeys.contains(k) }.toSeq.toMap
+    if (topicOptions.size > 1 || topicOptions.contains(TopicMulti) || topicOptions.contains(
+        TopicPattern)) {
       throw new IllegalArgumentException(
         "Currently, we only support specify single topic through option, " +
-          s"use '$TOPIC_SINGLE' to specify it.")
+          s"use '$TopicSingle' to specify it.")
     }
 
     caseInsensitiveParams
   }
 
-  private def prepareConfForReader(parameters: Map[String, String])
-    : (ju.Map[String, Object], ju.Map[String, Object], ju.Map[String, Object], String, String) = {
+  private def prepareConfForReader(parameters: Map[String, String]): (
+      ju.Map[String, Object],
+      ju.Map[String, Object],
+      ju.Map[String, Object],
+      String,
+      String) = {
 
     val serviceUrl = getServiceUrl(parameters)
     val adminUrl = getAdminUrl(parameters)
 
     var clientParams = getClientParams(parameters)
-    clientParams += (SERVICE_URL_OPTION_KEY -> serviceUrl)
+    clientParams += (ServiceUrlOptionKey -> serviceUrl)
     val readerParams = getReaderParams(parameters)
     val adminParams = Option(getAdminParams(parameters))
       .filter(_.nonEmpty)
@@ -496,28 +535,26 @@ private[pulsar] object PulsarProvider extends Logging {
       paramsToPulsarConf("pulsar.reader", readerParams),
       paramsToPulsarConf("pulsar.admin", adminParams),
       serviceUrl,
-      adminUrl
-    )
+      adminUrl)
   }
 
   private def prepareConfForProducer(parameters: Map[String, String])
-    : (ju.Map[String, Object], ju.Map[String, Object], Option[String], String) = {
+      : (ju.Map[String, Object], ju.Map[String, Object], Option[String], String) = {
 
     val serviceUrl = getServiceUrl(parameters)
     val adminUrl = getAdminUrl(parameters)
 
     var clientParams = getClientParams(parameters)
-    clientParams += (SERVICE_URL_OPTION_KEY -> serviceUrl)
+    clientParams += (ServiceUrlOptionKey -> serviceUrl)
     val producerParams = getProducerParams(parameters)
 
-    val topic = parameters.get(TOPIC_SINGLE).map(_.trim).map(TopicName.get(_).toString)
+    val topic = parameters.get(TopicSingle).map(_.trim).map(TopicName.get(_).toString)
 
     (
       paramsToPulsarConf("pulsar.client", clientParams),
       paramsToPulsarConf("pulsar.producer", producerParams),
       topic,
-      adminUrl
-    )
+      adminUrl)
   }
 
   private def jsonOptions: JSONOptionsInRead = {

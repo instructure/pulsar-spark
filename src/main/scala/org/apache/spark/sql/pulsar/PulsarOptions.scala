@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -13,50 +13,55 @@
  */
 package org.apache.spark.sql.pulsar
 
+import java.util.Locale
+
 import org.apache.pulsar.common.naming.TopicName
 
 // All options should be lowercase to simplify parameter matching
 private[pulsar] object PulsarOptions {
 
   // option key prefix for different modules
-  val PULSAR_ADMIN_OPTION_KEY_PREFIX = "pulsar.admin."
-  val PULSAR_CLIENT_OPTION_KEY_PREFIX = "pulsar.client."
-  val PULSAR_PRODUCER_OPTION_KEY_PREFIX = "pulsar.producer."
-  val PULSAR_CONSUMER_OPTION_KEY_PREFIX = "pulsar.consumer."
-  val PULSAR_READER_OPTION_KEY_PREFIX = "pulsar.reader."
+
+  val PulsarAdminOptionKeyPrefix: String = "pulsar.admin."
+  val PulsarClientOptionKeyPrefix: String = "pulsar.client."
+  val PulsarProducerOptionKeyPrefix: String = "pulsar.producer."
+  val PulsarReaderOptionKeyPrefix: String = "pulsar.reader."
 
   // options
 
-  val TOPIC_SINGLE = "topic"
-  val TOPIC_MULTI = "topics"
-  val TOPIC_PATTERN = "topicspattern"
+  val TopicSingle: String = "topic"
+  val TopicMulti: String = "topics"
+  val TopicPattern: String = "topicsPattern".toLowerCase(Locale.ROOT)
 
-  val PARTITION_SUFFIX = TopicName.PARTITIONED_TOPIC_SUFFIX
+  val PartitionSuffix: String = TopicName.PARTITIONED_TOPIC_SUFFIX
 
-  val TOPIC_OPTION_KEYS = Set(
-    TOPIC_SINGLE,
-    TOPIC_MULTI,
-    TOPIC_PATTERN
-  )
+  val TopicOptionKeys: Set[String] = Set(TopicSingle, TopicMulti, TopicPattern)
 
-  val SERVICE_URL_OPTION_KEY = "service.url"
-  val ADMIN_URL_OPTION_KEY = "admin.url"
-  val STARTING_OFFSETS_OPTION_KEY = "startingoffsets"
-  val STARTING_TIME = "startingtime"
-  val ENDING_OFFSETS_OPTION_KEY = "endingoffsets"
+  val MaxEntriesPerTrigger = "maxentriespertrigger"
 
-  val POLL_TIMEOUT_MS = "polltimeoutms"
-  val FAIL_ON_DATA_LOSS_OPTION_KEY = "failondataloss"
+  val ServiceUrlOptionKey: String = "service.url"
+  val AdminUrlOptionKey: String = "admin.url"
+  val StartingOffsetsOptionKey: String = "startingOffsets".toLowerCase(Locale.ROOT)
+  val StartingTime: String = "startingTime".toLowerCase(Locale.ROOT)
+  val EndingTime: String = "endingTime".toLowerCase(Locale.ROOT)
+  val EndingOffsetsOptionKey: String = "endingOffsets".toLowerCase(Locale.ROOT)
+  val StartOptionKey: String = "startOptionKey".toLowerCase(Locale.ROOT)
+  val EndOptionKey: String = "endOptionKey".toLowerCase(Locale.ROOT)
+  val SubscriptionPrefix: String = "subscriptionPrefix".toLowerCase(Locale.ROOT)
+  val PredefinedSubscription: String = "predefinedSubscription".toLowerCase(Locale.ROOT)
 
-  val AUTH_PLUGIN_CLASS_NAME = "authPluginClassName"
-  val AUTH_PARAMS = "authParams"
-  val TLS_TRUST_CERTS_FILE_PATH = "tlsTrustCertsFilePath"
-  val TLS_ALLOW_INSECURE_CONNECTION = "tlsAllowInsecureConnection"
-  val USE_TLS = "useTls"
-  val TLS_HOSTNAME_VERIFICATION_ENABLE = "tlsHostnameVerificationEnable"
+  val PollTimeoutMS: String = "pollTimeoutMs".toLowerCase(Locale.ROOT)
+  val FailOnDataLossOptionKey: String = "failOnDataLoss".toLowerCase(Locale.ROOT)
 
+  val AuthPluginClassName: String = "authPluginClassName"
+  val AuthParams: String = "authParams"
+  val TlsTrustCertsFilePath: String = "tlsTrustCertsFilePath"
+  val TlsAllowInsecureConnection: String = "tlsAllowInsecureConnection"
+  val TlsHostnameVerificationEnable: String = "tlsHostnameVerificationEnable"
 
-  val INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_FALSE =
+  val AllowDifferentTopicSchemas: String = "allowDifferentTopicSchemas".toLowerCase(Locale.ROOT)
+
+  val InstructionForFailOnDataLossFalse: String =
     """
       |Some data may have been lost because they are not available in Pulsar any more; either the
       | data was aged out by Pulsar or the topic may have been deleted before all the data in the
@@ -64,7 +69,7 @@ private[pulsar] object PulsarOptions {
       | option "failOnDataLoss" to "true".
     """.stripMargin
 
-  val INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_TRUE =
+  val InstructionForFailOnDataLossTrue: String =
     """
       |Some data may have been lost because they are not available in Pulsar any more; either the
       | data was aged out by Pulsar or the topic may have been deleted before all the data in the
@@ -72,22 +77,22 @@ private[pulsar] object PulsarOptions {
       | source option "failOnDataLoss" to "false".
     """.stripMargin
 
-  val TOPIC_SCHEMA_CLASS_OPTION_KEY = "topic.schema.class"
+  val TopicSchemaClassOptionKey: String = "topic.schema.class"
 
-  val FILTERED_KEYS: Set[String] =
-    Set(TOPIC_SINGLE, SERVICE_URL_OPTION_KEY, TOPIC_SCHEMA_CLASS_OPTION_KEY)
+  val FilteredKeys: Set[String] = Set(TopicSingle, ServiceUrlOptionKey, TopicSchemaClassOptionKey)
 
-  val TOPIC_ATTRIBUTE_NAME: String = "__topic"
-  val KEY_ATTRIBUTE_NAME: String = "__key"
-  val MESSAGE_ID_NAME: String = "__messageId"
-  val PUBLISH_TIME_NAME: String = "__publishTime"
-  val EVENT_TIME_NAME: String = "__eventTime"
+  val TopicAttributeName: String = "__topic"
+  val KeyAttributeName: String = "__key"
+  val MessageIdName: String = "__messageId"
+  val PublishTimeName: String = "__publishTime"
+  val EventTimeName: String = "__eventTime"
+  val MessagePropertiesName: String = "__messageProperties"
 
-  val META_FIELD_NAMES = Set(
-    TOPIC_ATTRIBUTE_NAME,
-    KEY_ATTRIBUTE_NAME,
-    MESSAGE_ID_NAME,
-    PUBLISH_TIME_NAME,
-    EVENT_TIME_NAME
-  )
+  val MetaFieldNames: Set[String] = Set(
+    TopicAttributeName,
+    KeyAttributeName,
+    MessageIdName,
+    PublishTimeName,
+    EventTimeName,
+    MessagePropertiesName)
 }

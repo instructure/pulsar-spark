@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -17,7 +17,6 @@ import java.io._
 import java.nio.charset.StandardCharsets
 
 import org.apache.commons.io.IOUtils
-
 import org.apache.pulsar.client.api.MessageId
 import org.apache.pulsar.client.impl.{BatchMessageIdImpl, MessageIdImpl, TopicMessageIdImpl}
 
@@ -51,18 +50,19 @@ private[pulsar] object PulsarSourceUtils extends Logging {
   }
 
   private def compare(a: ExecutorCacheTaskLocation, b: ExecutorCacheTaskLocation): Boolean = {
-    if (a.host == b.host) { a.executorId > b.executorId } else { a.host > b.host }
+    if (a.host == b.host) { a.executorId > b.executorId }
+    else { a.host > b.host }
   }
 
   /**
-   * If `failOnDataLoss` is true, this method will throw an `IllegalStateException`.
-   * Otherwise, just log a warning.
+   * If `failOnDataLoss` is true, this method will throw an `IllegalStateException`. Otherwise,
+   * just log a warning.
    */
   def reportDataLossFunc(failOnDataLoss: Boolean): (String) => Unit = { (message: String) =>
     if (failOnDataLoss) {
-      throw new IllegalStateException(message + s". $INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_TRUE")
+      throw new IllegalStateException(message + s". $InstructionForFailOnDataLossTrue")
     } else {
-      logWarning(message + s". $INSTRUCTION_FOR_FAIL_ON_DATA_LOSS_FALSE")
+      logWarning(message + s". $InstructionForFailOnDataLossFalse")
     }
   }
 
@@ -117,6 +117,36 @@ private[pulsar] object PulsarSourceUtils extends Logging {
       case midi: MessageIdImpl => midi
       case t: TopicMessageIdImpl => mid2Impl(t.getInnerMessageId)
       case up: UserProvidedMessageId => mid2Impl(up.mid)
+    }
+  }
+
+  def getLedgerId(mid: MessageId): Long = {
+    mid match {
+      case bmid: BatchMessageIdImpl =>
+        bmid.getLedgerId
+      case midi: MessageIdImpl => midi.getLedgerId
+      case t: TopicMessageIdImpl => getLedgerId(t.getInnerMessageId)
+      case up: UserProvidedMessageId => up.getLedgerId
+    }
+  }
+
+  def getEntryId(mid: MessageId): Long = {
+    mid match {
+      case bmid: BatchMessageIdImpl =>
+        bmid.getEntryId
+      case midi: MessageIdImpl => midi.getEntryId
+      case t: TopicMessageIdImpl => getEntryId(t.getInnerMessageId)
+      case up: UserProvidedMessageId => up.getEntryId
+    }
+  }
+
+  def getPartitionIndex(mid: MessageId): Int = {
+    mid match {
+      case bmid: BatchMessageIdImpl =>
+        bmid.getPartitionIndex
+      case midi: MessageIdImpl => midi.getPartitionIndex
+      case t: TopicMessageIdImpl => getPartitionIndex(t.getInnerMessageId)
+      case up: UserProvidedMessageId => up.getPartitionIndex
     }
   }
 

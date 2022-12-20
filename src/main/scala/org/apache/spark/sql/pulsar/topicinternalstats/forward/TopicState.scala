@@ -11,7 +11,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/**
- * Structured Streaming Data Source for Pulsar.
- */
-package org.apache.spark.sql.pulsar;
+package org.apache.spark.sql.pulsar.topicinternalstats.forward
+
+import org.apache.pulsar.common.policies.data.PersistentTopicInternalStats
+
+case class TopicState(internalStat: PersistentTopicInternalStats,
+                      ledgerId: Long,
+                      entryId: Long)

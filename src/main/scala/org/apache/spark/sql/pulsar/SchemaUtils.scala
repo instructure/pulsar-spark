@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -29,7 +29,12 @@ import org.apache.pulsar.common.naming.TopicName
 import org.apache.pulsar.common.protocol.schema.PostSchemaPayload
 import org.apache.pulsar.common.schema.{SchemaInfo, SchemaType}
 import org.apache.pulsar.shade.org.apache.avro.{LogicalTypes, Schema => ASchema, SchemaBuilder}
-import org.apache.pulsar.shade.org.apache.avro.LogicalTypes.{Date, Decimal, TimestampMicros, TimestampMillis}
+import org.apache.pulsar.shade.org.apache.avro.LogicalTypes.{
+  Date,
+  Decimal,
+  TimestampMicros,
+  TimestampMillis
+}
 import org.apache.pulsar.shade.org.apache.avro.Schema.Type._
 
 import org.apache.spark.sql.types._
@@ -43,7 +48,7 @@ class SchemaInfoSerializable(var si: SchemaInfo) extends Externalizable {
 
   override def writeExternal(out: ObjectOutput): Unit = {
     val schema = si.getSchema
-    if (schema.length == 0) {
+    if (schema.isEmpty) {
       out.writeInt(0)
     } else {
       out.writeInt(schema.length)
@@ -56,18 +61,23 @@ class SchemaInfoSerializable(var si: SchemaInfo) extends Externalizable {
   }
 
   override def readExternal(in: ObjectInput): Unit = {
-    si = new SchemaInfo()
     val len = in.readInt()
+    var schema = new Array[Byte](0)
     if (len > 0) {
-      val ba = new Array[Byte](len)
-      in.readFully(ba)
-      si.setSchema(ba)
-    } else {
-      si.setSchema(new Array[Byte](0))
+      schema = new Array[Byte](len)
+      in.readFully(schema)
     }
-    si.setName(in.readUTF())
-    si.setProperties(in.readObject().asInstanceOf[java.util.Map[String, String]])
-    si.setType(SchemaType.valueOf(in.readInt()))
+    val schemaName = in.readUTF()
+    val properties = in.readObject().asInstanceOf[java.util.Map[String, String]]
+    val schemaType = SchemaType.valueOf(in.readInt())
+
+    si = SchemaInfoImpl
+      .builder()
+      .name(schemaName)
+      .schema(schema)
+      .`type`(schemaType)
+      .properties(properties)
+      .build()
   }
 }
 
@@ -78,16 +88,17 @@ private[pulsar] object SchemaUtils {
   def uploadPulsarSchema(admin: PulsarAdmin, topic: String, schemaInfo: SchemaInfo): Unit = {
     assert(schemaInfo != null, "schemaInfo shouldn't be null")
 
-    val existingSchema = try {
-      admin.schemas().getSchemaInfo(TopicName.get(topic).toString)
-    } catch {
-      case e: PulsarAdminException if e.getStatusCode == 404 =>
-        null
-      case e: Throwable =>
-        throw new RuntimeException(
-          s"Failed to get schema information for ${TopicName.get(topic).toString}",
-          e)
-    }
+    val existingSchema =
+      try {
+        admin.schemas().getSchemaInfo(TopicName.get(topic).toString)
+      } catch {
+        case e: PulsarAdminException if e.getStatusCode == 404 =>
+          null
+        case e: Throwable =>
+          throw new RuntimeException(
+            s"Failed to get schema information for ${TopicName.get(topic).toString}",
+            e)
+      }
 
     if (existingSchema == null) {
       val pl = new PostSchemaPayload()
@@ -105,7 +116,8 @@ private[pulsar] object SchemaUtils {
             s"Failed to create schema for ${TopicName.get(topic).toString}",
             e)
       }
-    } else if (existingSchema.equals(schemaInfo) || compatibleSchema(existingSchema, schemaInfo)) {
+    } else if (existingSchema
+        .equals(schemaInfo) || compatibleSchema(existingSchema, schemaInfo)) {
       // no need to upload again
     } else {
       throw new RuntimeException("Writing to a topic which have incompatible schema")
@@ -194,7 +206,7 @@ private[pulsar] object SchemaUtils {
           new ASchema.Parser().parse(new String(si.getSchema, StandardCharsets.UTF_8))
         avro2SqlType(avroSchema, Set.empty)
       case si =>
-        throw new NotImplementedError(s"We do not support $si currently.")
+        throw new UnsupportedOperationException(s"We do not support $si currently.")
     }
   }
 
@@ -276,11 +288,10 @@ private[pulsar] object SchemaUtils {
             case _ =>
               // Convert complex unions to struct types where field names are member0, member1, etc.
               // This is consistent with the behavior when converting between Avro and Parquet.
-              val fields = avroSchema.getTypes.asScala.zipWithIndex.map {
-                case (s, i) =>
-                  val TypeNullable = avro2SqlType(s, existingRecordNames)
-                  // All fields are nullable because only one of them is set at a time
-                  StructField(s"member$i", TypeNullable.dataType, nullable = true)
+              val fields = avroSchema.getTypes.asScala.zipWithIndex.map { case (s, i) =>
+                val TypeNullable = avro2SqlType(s, existingRecordNames)
+                // All fields are nullable because only one of them is set at a time
+                StructField(s"member$i", TypeNullable.dataType, nullable = true)
               }
 
               TypeNullable(StructType(fields), nullable = false)
@@ -292,10 +303,8 @@ private[pulsar] object SchemaUtils {
 
   def ASchema2PSchema(aschema: ASchema): GenericSchema[GenericRecord] = {
     val schema = aschema.toString.getBytes(StandardCharsets.UTF_8)
-    val si = new SchemaInfo()
-    si.setName("Avro")
-    si.setSchema(schema)
-    si.setType(SchemaType.AVRO)
+    val si = SchemaInfoImpl.builder().name("Avro").schema(schema).`type`(SchemaType.AVRO).build();
+
     PSchema.generic(si)
   }
 
@@ -383,11 +392,11 @@ private[pulsar] object SchemaUtils {
   import PulsarOptions._
 
   val metaDataFields: Seq[StructField] = Seq(
-    StructField(KEY_ATTRIBUTE_NAME, BinaryType),
-    StructField(TOPIC_ATTRIBUTE_NAME, StringType),
-    StructField(MESSAGE_ID_NAME, BinaryType),
-    StructField(PUBLISH_TIME_NAME, TimestampType),
-    StructField(EVENT_TIME_NAME, TimestampType)
-  )
+    StructField(KeyAttributeName, BinaryType),
+    StructField(TopicAttributeName, StringType),
+    StructField(MessageIdName, BinaryType),
+    StructField(PublishTimeName, TimestampType),
+    StructField(EventTimeName, TimestampType),
+    StructField(MessagePropertiesName, MapType(StringType, StringType, valueContainsNull = true)))
 
 }

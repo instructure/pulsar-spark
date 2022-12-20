@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -15,35 +15,29 @@ package org.apache.spark.sql.pulsar
 
 import java.{util => ju}
 
+import scala.collection.JavaConverters._
+
 import org.apache.pulsar.client.admin.PulsarAdmin
+
+import org.apache.spark.sql.pulsar.PulsarOptions.{AuthParams, AuthPluginClassName}
 
 object AdminUtils {
 
-  import PulsarOptions._
+  def buildAdmin(adminUrl: String, config: ju.Map[String, Object]): PulsarAdmin = {
+    val clientConf =
+      PulsarConfigUpdater("pulsarClientCache", config.asScala.toMap, PulsarOptions.FilteredKeys)
+        .rebuild()
 
-  def buildAdmin(adminUrl: String, clientConf: ju.Map[String, Object]): PulsarAdmin = {
-    val builder = PulsarAdmin.builder().serviceHttpUrl(adminUrl)
+    val builder = PulsarAdmin
+      .builder()
+      .loadConf(clientConf)
+      .serviceHttpUrl(adminUrl)
 
-    if (clientConf.containsKey(AUTH_PLUGIN_CLASS_NAME)) {
-      builder.authentication(
-        clientConf.get(AUTH_PLUGIN_CLASS_NAME).toString, clientConf.get(AUTH_PARAMS).toString)
-    }
-
-    if (clientConf.containsKey(TLS_ALLOW_INSECURE_CONNECTION)) {
-      builder.allowTlsInsecureConnection(
-        clientConf.get(TLS_ALLOW_INSECURE_CONNECTION).toString.toBoolean)
-    }
-
-    if (clientConf.containsKey(TLS_HOSTNAME_VERIFICATION_ENABLE)) {
-      builder.enableTlsHostnameVerification(
-        clientConf.get(TLS_HOSTNAME_VERIFICATION_ENABLE).toString.toBoolean)
-    }
-
-    if (clientConf.containsKey(TLS_TRUST_CERTS_FILE_PATH)) {
-      builder.tlsTrustCertsFilePath(clientConf.get(TLS_TRUST_CERTS_FILE_PATH).toString)
-    }
+    // Set Pulsar authentication. This couldn't be load by the loadConf directly.
+    Option(clientConf.get(AuthPluginClassName)).foreach(pluginClasName => {
+      builder.authentication(pluginClasName.toString, clientConf.get(AuthParams).toString)
+    })
 
     builder.build()
   }
-
 }

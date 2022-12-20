@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -36,7 +36,7 @@ private[pulsar] case class SpecificPulsarOffset(topicOffsets: Map[String, Messag
   override val json = JsonUtils.topicOffsets(topicOffsets)
 }
 
-private[pulsar] case class SpecificPulsarStartingTime(topicTimes: Map[String, Long])
+private[pulsar] case class SpecificPulsarTime(topicTimes: Map[String, Long])
     extends Offset
     with PerTopicOffset {
 

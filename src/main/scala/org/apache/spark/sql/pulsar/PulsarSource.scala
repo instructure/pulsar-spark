@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -36,7 +36,8 @@ private[pulsar] class PulsarSource(
     pollTimeoutMs: Int,
     failOnDataLoss: Boolean,
     subscriptionNamePrefix: String,
-    jsonOptions: JSONOptionsInRead)
+    jsonOptions: JSONOptionsInRead,
+    maxEntriesPerTrigger: Long)
     extends Source
     with Logging {
 
@@ -49,11 +50,7 @@ private[pulsar] class PulsarSource(
 
   private lazy val initialTopicOffsets: SpecificPulsarOffset = {
     val metadataLog = new PulsarSourceInitialOffsetWriter(sqlContext.sparkSession, metadataPath)
-    metadataLog.getInitialOffset(
-      metadataReader,
-      startingOffsets,
-      pollTimeoutMs,
-      reportDataLoss)
+    metadataLog.getInitialOffset(metadataReader, startingOffsets, pollTimeoutMs, reportDataLoss)
   }
 
   private var currentTopicOffsets: Option[Map[String, MessageId]] = None
@@ -63,12 +60,21 @@ private[pulsar] class PulsarSource(
   override def schema(): StructType = SchemaUtils.pulsarSourceSchema(pulsarSchema)
 
   override def getOffset: Option[Offset] = {
-    // Make sure initialTopicOffsets is initialized
     initialTopicOffsets
-    val latest = metadataReader.fetchLatestOffsets()
-    currentTopicOffsets = Some(latest.topicOffsets)
-    logDebug(s"GetOffset: ${latest.topicOffsets.toSeq.map(_.toString).sorted}")
-    Some(latest.asInstanceOf[Offset])
+    val nextOffsets = if (maxEntriesPerTrigger == -1) {
+      metadataReader.fetchLatestOffsets()
+    } else {
+      currentTopicOffsets match {
+        case Some(value) =>
+          metadataReader.fetchNextOffsetWithMaxEntries(value,
+            maxEntriesPerTrigger)
+        case _ =>
+          metadataReader.fetchNextOffsetWithMaxEntries(initialTopicOffsets.topicOffsets,
+            maxEntriesPerTrigger)
+      }
+    }
+    logDebug(s"GetOffset: ${nextOffsets.topicOffsets.toSeq.map(_.toString).sorted}")
+    Some(nextOffsets.asInstanceOf[Offset])
   }
 
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
@@ -78,9 +84,7 @@ private[pulsar] class PulsarSource(
     logInfo(s"getBatch called with start = $start, end = $end")
     val endTopicOffsets = SpecificPulsarOffset.getTopicOffsets(end)
 
-    if (currentTopicOffsets.isEmpty) {
-      currentTopicOffsets = Some(endTopicOffsets)
-    }
+    currentTopicOffsets = Some(endTopicOffsets)
 
     if (start.isDefined && start.get == end) {
       return sqlContext.internalCreateDataFrame(
@@ -111,10 +115,11 @@ private[pulsar] class PulsarSource(
 
     val offsetRanges = endTopicOffsets.keySet
       .map { tp =>
-        val fromOffset = newFromTopicOffsets.getOrElse(tp, {
-          // This should never happen
-          throw new IllegalStateException(s"$tp doesn't have a from offset")
-        })
+        val fromOffset = newFromTopicOffsets.getOrElse(
+          tp, {
+            // This should never happen
+            throw new IllegalStateException(s"$tp doesn't have a from offset")
+          })
         val untilOffset = endTopicOffsets(tp)
         val preferredLoc = if (numExecutors > 0) {
           // This allows cached PulsarClient in the executors to be re-used to read the same

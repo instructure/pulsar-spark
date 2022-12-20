@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -66,41 +66,41 @@ private[pulsar] abstract class PulsarRowWriter(
     val topicExpression = topic
       .map(Literal(_))
       .orElse {
-        inputSchema.find(_.name == TOPIC_ATTRIBUTE_NAME)
+        inputSchema.find(_.name == TopicAttributeName)
       }
       .getOrElse {
         throw new IllegalStateException(
           s"topic option required when no " +
-            s"'$TOPIC_ATTRIBUTE_NAME' attribute is present")
+            s"'$TopicAttributeName' attribute is present")
       }
     topicExpression.dataType match {
       case StringType => // good
       case t =>
         throw new IllegalStateException(
-          TOPIC_ATTRIBUTE_NAME +
-            s"attribute unsupported type $t. $TOPIC_ATTRIBUTE_NAME " +
+          TopicAttributeName +
+            s"attribute unsupported type $t. $TopicAttributeName " +
             s"must be a ${StringType.catalogString}")
     }
 
     val keyExpression = inputSchema
-      .find(_.name == KEY_ATTRIBUTE_NAME)
+      .find(_.name == KeyAttributeName)
       .getOrElse(Literal(null, BinaryType))
     keyExpression.dataType match {
       case StringType | BinaryType => // good
       case t =>
         throw new IllegalStateException(
-          KEY_ATTRIBUTE_NAME +
+          KeyAttributeName +
             s"attribute unsupported type ${t.catalogString}")
     }
 
     val eventTimeExpression = inputSchema
-      .find(_.name == EVENT_TIME_NAME)
+      .find(_.name == EventTimeName)
       .getOrElse(Literal(null, LongType))
     eventTimeExpression.dataType match {
       case LongType | TimestampType => // good
       case t =>
         throw new IllegalStateException(
-          EVENT_TIME_NAME +
+          EventTimeName +
             s"attribute unsupported type ${t.catalogString}")
     }
 
@@ -109,7 +109,7 @@ private[pulsar] abstract class PulsarRowWriter(
       inputSchema)
 
     val valuesExpression =
-      inputSchema.filter(n => !PulsarOptions.META_FIELD_NAMES.contains(n.name))
+      inputSchema.filter(n => !PulsarOptions.MetaFieldNames.contains(n.name))
 
     val valueProj = UnsafeProjection.create(valuesExpression, inputSchema)
 
@@ -167,8 +167,8 @@ private[pulsar] abstract class PulsarRowWriter(
   }
 
   /**
-   * Send the specified row to the producer, with a callback that will save any exception
-   * to failedWrite. Note that send is asynchronous; subclasses must flush() their producer before
+   * Send the specified row to the producer, with a callback that will save any exception to
+   * failedWrite. Note that send is asynchronous; subclasses must flush() their producer before
    * assuming the row is in Pulsar.
    */
   protected def sendRow(row: InternalRow): Unit = {
@@ -182,7 +182,7 @@ private[pulsar] abstract class PulsarRowWriter(
     if (topic == null) {
       throw new NullPointerException(
         s"null topic present in the data. Use the " +
-          s"$TOPIC_SINGLE option for setting a topic.")
+          s"$TopicSingle option for setting a topic.")
     }
 
     val mb = getProducer(topic.toString).newMessage().value(value)

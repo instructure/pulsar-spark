@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -13,17 +13,16 @@
  */
 package org.apache.spark.sql.pulsar
 
-import org.json4s.NoTypeHints
-import org.json4s.jackson.Serialization
-
 import org.apache.pulsar.client.api.MessageId
+import org.json4s.{Formats, NoTypeHints}
+import org.json4s.jackson.Serialization
 
 /**
  * Utils for converting pulsar objects to and from json.
  */
 object JsonUtils {
 
-  private implicit val formats = Serialization.formats(NoTypeHints)
+  private implicit val formats: AnyRef with Formats = Serialization.formats(NoTypeHints)
 
   def topics(str: String): Array[String] = {
     Serialization.read[Array[String]](str)
@@ -34,16 +33,14 @@ object JsonUtils {
   }
 
   def topicOffsets(str: String): Map[String, MessageId] = {
-    Serialization.read[Map[String, Array[Byte]]](str).map {
-      case (topic, msgIdBytes) =>
-        (topic, MessageId.fromByteArray(msgIdBytes))
+    Serialization.read[Map[String, Array[Byte]]](str).map { case (topic, msgIdBytes) =>
+      (topic, MessageId.fromByteArray(msgIdBytes))
     }
   }
 
   def topicOffsets(topicOffsets: Map[String, MessageId]): String = {
-    Serialization.write(topicOffsets.map {
-      case (topic, msgId) =>
-        (topic, msgId.toByteArray)
+    Serialization.write(topicOffsets.map { case (topic, msgId) =>
+      (topic, msgId.toByteArray)
     })
   }
 
